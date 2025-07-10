@@ -1,3 +1,21 @@
-# Python virtual environment
-bot_env
-__pycache__
+# Переменные окружения
+.env
+.env.local
+.env.production
+
+# Конфиденциальные файлы
+config_local.py
+secrets.py
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+bot_env/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt

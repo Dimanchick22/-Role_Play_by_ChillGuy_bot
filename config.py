@@ -1,6 +1,13 @@
-# config.py
-# Замени на свой токен от BotFather
-BOT_TOKEN = "7637865078:AAH1Hx2BJ2d1x19bFnRsCvIBW7ANHIfC-q0"
+import os
+from dotenv import load_dotenv
 
-# Дополнительные настройки (можно добавить позже)
-DEBUG = True
+# Загружаем переменные окружения
+load_dotenv()
+
+# Получаем токен из переменных окружения
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN не найден в переменных окружения")
+
+# Дополнительные настройки
+DEBUG = os.getenv("DEBUG", "False").lower() == "true"
