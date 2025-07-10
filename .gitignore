@@ -1,21 +1,27 @@
 # Переменные окружения
 .env
 .env.local
-.env.production
-
-# Конфиденциальные файлы
-config_local.py
-secrets.py
 
 # Python
 __pycache__/
 *.pyc
 *.pyo
-*.pyd
 .Python
-env/
-venv/
 bot_env/
+venv/
+env/
 .venv/
-pip-log.txt
-pip-delete-this-directory.txt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Логи
+*.log
+
+# Тесты
+.pytest_cache/
+.coverage
+htmlcov/
