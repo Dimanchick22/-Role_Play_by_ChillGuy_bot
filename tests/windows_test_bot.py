@@ -13,10 +13,6 @@ from pathlib import Path
 # Добавляем корневую папку в path
 sys.path.append(str(Path(__file__).parent.parent))
 
-# Настройка для Windows ПЕРЕД импортом telegram
-if platform.system() == 'Windows':
-    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes

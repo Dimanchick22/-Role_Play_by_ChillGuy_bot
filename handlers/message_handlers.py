@@ -1,31 +1,38 @@
-"""Обработчики текстовых сообщений - обновленная версия."""
+"""Обработчики текстовых сообщений - исправленная версия."""
 
 import logging
 from datetime import datetime
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from handlers.base_handler import BaseHandler
+# ИСПРАВЛЕНО: Импорт улучшенного базового обработчика
+from handlers.base_handler import ImprovedBaseHandler
 from models.base import BaseMessage, MessageType, MessageRole
 
 logger = logging.getLogger(__name__)
 
-class MessageHandlers(BaseHandler):
+class MessageHandlers(ImprovedBaseHandler):
     """Обработчики текстовых сообщений."""
     
     async def handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработка текстового сообщения."""
-        user = self.get_user_from_update(update)  # Используем общий метод
+        user = self.get_user_from_update(update)
         message_text = update.message.text
+        
+        # Валидация и очистка ввода
+        if not self.validate_message_length(message_text):
+            await self.safe_reply(update, "❌ Сообщение слишком длинное")
+            return
+        
+        message_text = self.sanitize_text_input(message_text)
         
         # Показываем "печатает"
         await self.send_typing_action(update, context)
         
         try:
-            # Получаем сервисы
-            llm_service = self.get_service('llm')
-            storage_service = self.get_service('storage')
-            character_service = self.get_service('character')
+            # Получаем сервисы через улучшенные методы
+            storage_service = self.get_storage_service()
+            character_service = self.get_character_service()
             
             # Создаем сообщение пользователя
             user_message = BaseMessage(
@@ -38,6 +45,9 @@ class MessageHandlers(BaseHandler):
             )
             
             # Работаем с историей если есть хранилище
+            recent_messages = [user_message]
+            conversation = None
+            
             if storage_service and hasattr(storage_service, 'get_conversation'):
                 try:
                     conversation = storage_service.get_conversation(user.id)
@@ -45,13 +55,10 @@ class MessageHandlers(BaseHandler):
                     recent_messages = conversation.get_recent_messages()
                 except Exception as e:
                     logger.warning(f"Ошибка работы с хранилищем: {e}")
-                    recent_messages = [user_message]
-            else:
-                recent_messages = [user_message]
             
             # Генерируем ответ
             response_text, used_llm = await self._generate_response(
-                llm_service, character_service, recent_messages, user, message_text
+                recent_messages, user, message_text, character_service
             )
             
             # Создаем ответное сообщение
@@ -65,7 +72,7 @@ class MessageHandlers(BaseHandler):
             )
             
             # Сохраняем в историю
-            if storage_service and hasattr(storage_service, 'save_conversation'):
+            if conversation and storage_service:
                 try:
                     conversation.add_message(bot_message)
                     storage_service.save_conversation(conversation)
@@ -73,7 +80,7 @@ class MessageHandlers(BaseHandler):
                     logger.warning(f"Ошибка сохранения в хранилище: {e}")
             
             # Отправляем ответ
-            await update.message.reply_text(response_text)
+            await self.safe_reply(update, response_text)
             
             await self.log_interaction(
                 update, "text_processed",
@@ -83,15 +90,15 @@ class MessageHandlers(BaseHandler):
             
         except Exception as e:
             logger.error(f"Ошибка обработки сообщения: {e}", exc_info=True)
-            await self._send_error_response(update, character_service)
+            await self._send_error_response(update)
     
-    async def _generate_response(self, llm_service, character_service, 
-                               recent_messages, user, message_text) -> tuple[str, bool]:
+    async def _generate_response(self, recent_messages, user, message_text, character_service) -> tuple[str, bool]:
         """Генерирует ответ, используя LLM или шаблоны."""
         
         # Пытаемся использовать LLM
-        if llm_service and getattr(llm_service, 'is_available', False):
+        if self.is_llm_available():
             try:
+                llm_service = self.get_llm_service()
                 response_text = await llm_service.generate_response(
                     messages=recent_messages,
                     user=user
@@ -114,17 +121,7 @@ class MessageHandlers(BaseHandler):
         
         return response_text, False
     
-    async def _send_error_response(self, update: Update, character_service):
+    async def _send_error_response(self, update: Update):
         """Отправляет ответ при ошибке."""
-        try:
-            if character_service and hasattr(character_service, 'get_error_responses'):
-                import random
-                error_responses = character_service.get_error_responses()
-                error_message = random.choice(error_responses)
-            else:
-                error_message = "Упс! 🙈 Что-то пошло не так. Попробуй еще раз!"
-            
-            await update.message.reply_text(error_message)
-            
-        except Exception as e:
-            logger.error(f"Не удалось отправить сообщение об ошибке: {e}")
+        error_message = self.get_error_response("general")
+        await self.safe_reply(update, error_message)

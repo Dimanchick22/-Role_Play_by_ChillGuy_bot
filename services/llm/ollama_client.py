@@ -1,7 +1,9 @@
-"""Ollama LLM клиент - исправленная версия."""
+"""Ollama LLM клиент - исправленная версия с правильной async обработкой."""
 
+import asyncio
 import logging
 from typing import List, Dict, Any
+from concurrent.futures import ThreadPoolExecutor
 
 try:
     import ollama
@@ -9,45 +11,60 @@ except ImportError:
     logging.error("❌ Библиотека ollama не установлена. Установите: pip install ollama")
     ollama = None
 
-from services.llm.base_client import BaseLLMClient  # Правильный импорт
+from services.llm.base_client import BaseLLMClient
 from models.base import BaseMessage, User
 
 logger = logging.getLogger(__name__)
 
 class OllamaClient(BaseLLMClient):
-    """Клиент для Ollama - исправленная версия."""
+    """Клиент для Ollama с правильной async обработкой."""
     
     def __init__(self, model_name: str, **kwargs):
         super().__init__(model_name, **kwargs)
         self.is_available = False
+        self.active_model = None
+        self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ollama")
         
-        # Сразу проверяем доступность
-        if ollama is not None:
-            try:
-                models = ollama.list()
-                available_models = self.get_available_models()
+        # Проверяем доступность при создании
+        self._check_availability()
+    
+    def _check_availability(self) -> None:
+        """Проверяет доступность Ollama синхронно при инициализации."""
+        if ollama is None:
+            logger.warning("⚠️ Ollama библиотека недоступна")
+            return
+            
+        try:
+            models = ollama.list()
+            available_models = self._get_available_models_sync()
+            
+            # Автовыбор модели
+            if self.model_name == "auto":
+                self.active_model = self._select_best_model(available_models)
+            else:
+                self.active_model = self.model_name
+            
+            # Проверяем выбранную модель
+            if self.active_model in available_models:
+                self.is_available = True
+                logger.info(f"✅ Ollama клиент готов с моделью {self.active_model}")
+            else:
+                logger.warning(f"⚠️ Модель {self.active_model} недоступна")
                 
-                # Автовыбор модели
-                if self.model_name == "auto":
-                    selected_model = self._select_best_model(available_models)
-                    # Не изменяем исходный model_name для сохранения конфигурации
-                    self.active_model = selected_model
-                else:
-                    self.active_model = self.model_name
-                
-                # Проверяем выбранную модель
-                if self.active_model in available_models:
-                    self.is_available = True
-                    logger.info(f"✅ Ollama клиент готов с моделью {self.active_model}")
-                else:
-                    logger.warning(f"⚠️ Модель {self.active_model} недоступна")
-                    
-            except Exception as e:
-                logger.warning(f"⚠️ Ollama недоступна: {e}")
+        except Exception as e:
+            logger.warning(f"⚠️ Ollama недоступна: {e}")
     
     async def initialize(self) -> bool:
-        """Асинхронная инициализация для совместимости."""
-        return self.is_available
+        """Асинхронная инициализация (переинициализация)."""
+        try:
+            # Выполняем проверку в executor чтобы не блокировать event loop
+            await asyncio.get_event_loop().run_in_executor(
+                self._executor, self._check_availability
+            )
+            return self.is_available
+        except Exception as e:
+            logger.error(f"❌ Ошибка инициализации: {e}")
+            return False
     
     async def generate_response(
         self, 
@@ -55,7 +72,7 @@ class OllamaClient(BaseLLMClient):
         user: User,
         **kwargs
     ) -> str:
-        """Генерирует ответ через Ollama."""
+        """Генерирует ответ через Ollama асинхронно."""
         if not self.is_available or ollama is None:
             raise RuntimeError("Ollama клиент недоступен")
             
@@ -65,8 +82,10 @@ class OllamaClient(BaseLLMClient):
             
             logger.debug(f"Отправляем {len(ollama_messages)} сообщений в Ollama")
             
-            # Делаем СИНХРОННЫЙ запрос
-            response = self._call_ollama_sync(ollama_messages)
+            # ПРАВИЛЬНО: выполняем синхронный вызов в executor
+            response = await asyncio.get_event_loop().run_in_executor(
+                self._executor, self._call_ollama_sync, ollama_messages
+            )
             
             return response.strip()
             
@@ -75,18 +94,25 @@ class OllamaClient(BaseLLMClient):
             raise
     
     async def check_health(self) -> bool:
-        """Проверяет состояние Ollama."""
+        """Проверяет состояние Ollama асинхронно."""
         if ollama is None:
             return False
             
         try:
-            ollama.list()
+            # Выполняем проверку в executor
+            await asyncio.get_event_loop().run_in_executor(
+                self._executor, ollama.list
+            )
             return True
-        except:
+        except Exception:
             return False
     
     def get_available_models(self) -> List[str]:
-        """Возвращает доступные модели."""
+        """Возвращает доступные модели (может быть вызван синхронно)."""
+        return self._get_available_models_sync()
+    
+    def _get_available_models_sync(self) -> List[str]:
+        """Синхронное получение доступных моделей."""
         if ollama is None:
             return []
             
@@ -125,9 +151,15 @@ class OllamaClient(BaseLLMClient):
         for pref in preferred:
             for model in available:
                 if pref.lower() in model.lower():
+                    logger.info(f"🎯 Выбрана модель: {model}")
                     return model
         
-        return available[0] if available else "llama3.2:3b"
+        if available:
+            logger.info(f"🎯 Выбрана первая доступная модель: {available[0]}")
+            return available[0]
+        
+        logger.warning("⚠️ Нет доступных моделей, используем fallback")
+        return "llama3.2:3b"
     
     def _convert_messages(self, messages: List[BaseMessage], user: User) -> List[Dict]:
         """Преобразует сообщения в формат Ollama."""
@@ -137,7 +169,7 @@ class OllamaClient(BaseLLMClient):
         try:
             from core.registry import registry
             character_service = registry.get('character', None)
-        except:
+        except Exception:
             character_service = None
         
         # Добавляем системный промпт
@@ -148,7 +180,7 @@ class OllamaClient(BaseLLMClient):
                 "content": system_prompt
             })
         
-        # Добавляем сообщения пользователя (только последние 5)
+        # Добавляем сообщения пользователя (только последние 5 для экономии токенов)
         for msg in messages[-5:]:
             ollama_messages.append({
                 "role": msg.role.value,
@@ -158,11 +190,11 @@ class OllamaClient(BaseLLMClient):
         return ollama_messages
     
     def _call_ollama_sync(self, messages: List[Dict]) -> str:
-        """СИНХРОННЫЙ вызов Ollama API."""
+        """СИНХРОННЫЙ вызов Ollama API - выполняется в отдельном потоке."""
         try:
             logger.debug(f"Вызов Ollama с моделью {self.active_model}")
             
-            # Пробуем chat API
+            # Пробуем chat API (предпочтительный способ)
             response = ollama.chat(
                 model=self.active_model,
                 messages=messages,
@@ -184,7 +216,7 @@ class OllamaClient(BaseLLMClient):
             logger.warning(f"Chat API не сработал: {chat_error}, пробуем generate API")
             
             try:
-                # Fallback на generate
+                # Fallback на generate API
                 prompt = self._messages_to_prompt(messages)
                 response = ollama.generate(
                     model=self.active_model,
@@ -201,7 +233,7 @@ class OllamaClient(BaseLLMClient):
                 raise
     
     def _messages_to_prompt(self, messages: List[Dict]) -> str:
-        """Преобразует сообщения в промпт."""
+        """Преобразует сообщения в промпт для generate API."""
         prompt_parts = []
         
         for msg in messages:
@@ -217,3 +249,18 @@ class OllamaClient(BaseLLMClient):
         
         prompt_parts.append("Ассистент:")
         return "\n".join(prompt_parts)
+    
+    async def cleanup(self):
+        """Очистка ресурсов."""
+        logger.info("🧹 Очистка Ollama клиента...")
+        if hasattr(self, '_executor'):
+            self._executor.shutdown(wait=True)
+        logger.debug("✅ Ollama клиент очищен")
+    
+    def __del__(self):
+        """Деструктор для очистки executor."""
+        if hasattr(self, '_executor'):
+            try:
+                self._executor.shutdown(wait=False)
+            except Exception:
+                pass

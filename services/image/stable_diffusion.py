@@ -1,12 +1,16 @@
-"""Генератор изображений на Stable Diffusion."""
+"""Генератор изображений на Stable Diffusion - исправленная версия."""
 
 import asyncio
 import time
 import uuid
+import logging
 from pathlib import Path
 from typing import List, Optional
 
 from services.image.base_generator import BaseImageGenerator, ImagePrompt, GeneratedImage
+
+# ИСПРАВЛЕНО: Добавлен отсутствующий импорт logger
+logger = logging.getLogger(__name__)
 
 class StableDiffusionGenerator(BaseImageGenerator):
     """Генератор на основе Stable Diffusion."""
@@ -19,6 +23,8 @@ class StableDiffusionGenerator(BaseImageGenerator):
     async def initialize(self) -> bool:
         """Инициализирует генератор."""
         try:
+            logger.info("🎨 Начало инициализации Stable Diffusion...")
+            
             # Ленивый импорт для экономии памяти
             from diffusers import StableDiffusionPipeline
             import torch
@@ -26,6 +32,8 @@ class StableDiffusionGenerator(BaseImageGenerator):
             # Определяем устройство
             if self.device == 'auto':
                 self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            
+            logger.info(f"🔧 Загружаем модель {self.model_path} на {self.device}...")
             
             # Загружаем модель
             self.pipe = StableDiffusionPipeline.from_pretrained(
@@ -39,18 +47,25 @@ class StableDiffusionGenerator(BaseImageGenerator):
             # Оптимизации для CPU/GPU
             if self.device == 'cuda':
                 self.pipe.enable_memory_efficient_attention()
+                logger.info("✅ Включена memory efficient attention для GPU")
             else:
-                self.pipe.enable_sequential_cpu_offload()
+                # Для CPU используем более простую оптимизацию
+                try:
+                    self.pipe.enable_sequential_cpu_offload()
+                    logger.info("✅ Включен sequential CPU offload")
+                except Exception as e:
+                    logger.warning(f"⚠️ Не удалось включить CPU offload: {e}")
+                    logger.info("💡 Работаем без оптимизации CPU (для включения установите: pip install accelerate)")
             
             # Создаем выходную директорию
             self.output_dir.mkdir(parents=True, exist_ok=True)
             
             self.is_initialized = True
-            logger.info(f"Stable Diffusion инициализован на {self.device}")
+            logger.info(f"✅ Stable Diffusion инициализован на {self.device}")
             return True
             
         except Exception as e:
-            logger.error(f"Ошибка инициализации Stable Diffusion: {e}")
+            logger.error(f"❌ Ошибка инициализации Stable Diffusion: {e}")
             self.is_initialized = False
             return False
     
@@ -65,6 +80,8 @@ class StableDiffusionGenerator(BaseImageGenerator):
         start_time = time.time()
         
         try:
+            logger.info(f"🎨 Генерация изображения: '{prompt.text[:50]}...'")
+            
             # Генерируем изображение в отдельном потоке
             image = await asyncio.get_event_loop().run_in_executor(
                 None, self._generate_sync, prompt
@@ -74,6 +91,7 @@ class StableDiffusionGenerator(BaseImageGenerator):
             image_path = self._save_image(image, prompt)
             
             generation_time = time.time() - start_time
+            logger.info(f"✅ Изображение создано за {generation_time:.1f}с")
             
             return GeneratedImage(
                 image_path=image_path,
@@ -87,7 +105,7 @@ class StableDiffusionGenerator(BaseImageGenerator):
             )
             
         except Exception as e:
-            logger.error(f"Ошибка генерации изображения: {e}")
+            logger.error(f"❌ Ошибка генерации изображения: {e}")
             raise
     
     def get_available_styles(self) -> List[str]:
@@ -101,6 +119,8 @@ class StableDiffusionGenerator(BaseImageGenerator):
         """Синхронная генерация изображения."""
         # Формируем полный промпт
         full_prompt = self._build_full_prompt(prompt)
+        
+        logger.debug(f"Полный промпт: {full_prompt}")
         
         # Генерируем
         result = self.pipe(
@@ -153,5 +173,26 @@ class StableDiffusionGenerator(BaseImageGenerator):
         image_path = self.output_dir / filename
         image.save(image_path)
         
-        logger.info(f"Изображение сохранено: {image_path}")
+        logger.info(f"💾 Изображение сохранено: {image_path}")
         return image_path
+    
+    async def cleanup(self):
+        """Очистка ресурсов."""
+        logger.info("🧹 Очистка Stable Diffusion...")
+        if self.pipe is not None:
+            # Освобождаем GPU память
+            if hasattr(self.pipe, 'to'):
+                self.pipe.to('cpu')
+            del self.pipe
+            self.pipe = None
+            
+            # Очищаем CUDA кеш если используется GPU
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except:
+                pass
+        
+        self.is_initialized = False
+        logger.debug("✅ Stable Diffusion очищен")
