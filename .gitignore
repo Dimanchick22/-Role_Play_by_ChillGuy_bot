@@ -1,27 +1,121 @@
 # Переменные окружения
 .env
 .env.local
+.env.production
+.env.staging
 
 # Python
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
 .Python
 bot_env/
 venv/
 env/
 .venv/
+ENV/
+env.bak/
+venv.bak/
 
-# IDE
+# Распространенные среды разработки
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 
 # Логи
 *.log
+logs/
+test_bot.log
 
 # Тесты
 .pytest_cache/
 .coverage
 htmlcov/
+.tox/
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# Данные бота
+data/
+generated_images/
+migration_backup/
+*.db
+*.sqlite
+*.sqlite3
+
+# Временные файлы
+*.tmp
+*.temp
+.selected_model
+test_write.tmp
+
+# Операционная система
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Windows
+*.lnk
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Отчеты миграции
+MIGRATION_REPORT.md
+
+# Модели машинного обучения (если используются)
+*.pt
+*.pth
+*.onnx
+models/
+
+# Данные для обучения
+training_data/
+datasets/

@@ -1,4 +1,4 @@
-"""Главный класс приложения."""
+"""Главный класс приложения - исправленная версия."""
 
 import logging
 import asyncio
@@ -156,8 +156,8 @@ class TelegramBotApplication:
         
         # LLM сервис
         try:
-            llm_service = registry.get('llm')
-            if hasattr(llm_service, 'is_available') and llm_service.is_available:
+            llm_service = registry.get('llm', None)
+            if llm_service and hasattr(llm_service, 'is_available') and llm_service.is_available:
                 model_name = getattr(llm_service, 'model_name', 'неизвестно')
                 services_status.append(f"🧠 LLM: {model_name}")
             else:
@@ -165,20 +165,23 @@ class TelegramBotApplication:
         except:
             services_status.append("🧠 LLM: не найден")
         
-        # Сервис изображений
-        try:
-            image_service = registry.get('image')
-            if hasattr(image_service, 'is_initialized') and image_service.is_initialized:
-                services_status.append("🎨 Изображения: активны")
-            else:
-                services_status.append("🎨 Изображения: неактивны")
-        except:
-            services_status.append("🎨 Изображения: не найден")
+        # Сервис изображений (только если включен в конфигурации)
+        if self.config.image.enabled:
+            try:
+                image_service = registry.get('image', None)
+                if image_service and hasattr(image_service, 'is_initialized') and image_service.is_initialized:
+                    services_status.append("🎨 Изображения: активны")
+                else:
+                    services_status.append("🎨 Изображения: неактивны")
+            except:
+                services_status.append("🎨 Изображения: не найден")
+        else:
+            services_status.append("🎨 Изображения: отключены")
         
         # Хранилище
         try:
-            storage_service = registry.get('storage')
-            if hasattr(storage_service, 'get_stats'):
+            storage_service = registry.get('storage', None)
+            if storage_service and hasattr(storage_service, 'get_stats'):
                 stats = storage_service.get_stats()
                 total_conversations = stats.get('total_conversations', 0)
                 services_status.append(f"💾 Хранилище: {total_conversations} диалогов")

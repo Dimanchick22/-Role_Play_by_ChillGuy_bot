@@ -1,12 +1,31 @@
-"""Тесты для LLM клиента."""
+"""Тесты для LLM клиента - исправленная версия."""
 
 import asyncio
 import sys
 import os
+from datetime import datetime
+
+# Добавляем корневую папку проекта в path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from bot.character import Character
-from bot.llm_client import LLMClient
+# ИСПРАВЛЕННЫЕ ИМПОРТЫ
+from characters.alice import AliceCharacter
+from services.llm.ollama_client import OllamaClient
+from models.base import User, BaseMessage, MessageRole, MessageType
+
+
+def create_test_user() -> User:
+    """Создает тестового пользователя."""
+    return User(
+        id=12345,
+        username="tester",
+        first_name="Тестер",
+        last_name="Тестович",
+        language_code="ru",
+        created_at=datetime.now(),
+        last_seen=datetime.now(),
+        is_premium=False
+    )
 
 
 def test_ollama_connection():
@@ -37,6 +56,8 @@ def test_ollama_connection():
                 name = model.model
             elif isinstance(model, dict) and 'model' in model:
                 name = model['model']
+            elif hasattr(model, 'name'):
+                name = model.name
             else:
                 name = str(model)
             print(f"  {i+1}. {name}")
@@ -58,36 +79,61 @@ async def test_llm_client():
     
     try:
         # Инициализация
-        character = Character()
-        llm = LLMClient("llama3.2:3b", max_history=5)
+        character = AliceCharacter()
+        llm = OllamaClient(
+            model_name="auto",
+            temperature=0.7,
+            max_tokens=200
+        )
         
         print(f"✅ LLM клиент создан")
         print(f"Модель: {llm.model_name}")
         
-        # Установка промпта
-        prompt = character.get_system_prompt("Тестер")
-        llm.set_system_prompt(prompt)
-        print("✅ Системный промпт установлен")
+        # Пытаемся инициализировать
+        print("🔄 Попытка инициализации...")
+        initialized = await llm.initialize()
+        
+        if not initialized:
+            print("❌ Не удалось инициализировать LLM клиент")
+            return False
+        
+        print(f"✅ LLM клиент инициализирован с моделью: {llm.model_name}")
+        
+        # Создаем тестового пользователя
+        test_user = create_test_user()
         
         # Тестовые сообщения
-        test_messages = [
+        test_messages_text = [
             "Привет! Как дела?",
             "Расскажи о себе кратко",
             "Спасибо!"
         ]
         
-        user_id = 12345
-        
         print("\n--- Диалог с LLM ---")
-        for i, message in enumerate(test_messages, 1):
-            print(f"\n{i}. Пользователь: {message}")
+        for i, message_text in enumerate(test_messages_text, 1):
+            print(f"\n{i}. Пользователь: {message_text}")
             
             try:
-                response = await llm.get_response(message, user_id)
+                # Создаем объект сообщения
+                test_message = BaseMessage(
+                    id=f"test_{i}",
+                    content=message_text,
+                    role=MessageRole.USER,
+                    message_type=MessageType.TEXT,
+                    timestamp=datetime.now(),
+                    metadata={"user_id": test_user.id}
+                )
+                
+                # Генерируем ответ
+                response = await llm.generate_response(
+                    messages=[test_message],
+                    user=test_user
+                )
+                
                 print(f"   Алиса: {response}")
                 
                 # Проверяем, что ответ на русском
-                if any(char in response for char in 'абвгдеёжзийклмнопрстуфхцчшщъыьэюя'):
+                if any(char in response.lower() for char in 'абвгдеёжзийклмнопрстуфхцчшщъыьэюя'):
                     print("   ✅ Ответ на русском языке")
                 else:
                     print("   ⚠️ Возможно не на русском языке")
@@ -95,20 +141,23 @@ async def test_llm_client():
             except Exception as e:
                 print(f"   ❌ Ошибка: {e}")
         
-        # Тест статистики
-        print(f"\n--- Статистика ---")
-        stats = llm.get_stats()
-        for key, value in stats.items():
-            print(f"{key}: {value}")
+        # Тест проверки здоровья
+        print(f"\n--- Проверка состояния ---")
+        health = await llm.check_health()
+        print(f"Состояние LLM: {'✅ Здоров' if health else '❌ Недоступен'}")
         
-        # Тест очистки истории
-        llm.clear_history(user_id)
-        print("✅ История очищена")
+        # Тест получения доступных моделей
+        available_models = llm.get_available_models()
+        print(f"Доступно моделей: {len(available_models)}")
+        for model in available_models[:3]:
+            print(f"  - {model}")
         
         return True
         
     except Exception as e:
         print(f"❌ Ошибка тестирования LLM: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
