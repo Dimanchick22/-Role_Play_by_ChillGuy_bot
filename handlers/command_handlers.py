@@ -1,12 +1,10 @@
-"""Обработчики команд."""
+"""Обработчики команд - обновленная версия."""
 
 import logging
-from datetime import datetime
 from telegram import Update
 from telegram.ext import ContextTypes
 
 from handlers.base_handler import BaseHandler
-from models.base import User
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +13,7 @@ class CommandHandlers(BaseHandler):
     
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Команда /start."""
-        user = self._get_user_from_update(update)
+        user = self.get_user_from_update(update)  # Используем общий метод
         
         # Получаем сервис персонажа
         character_service = self.get_service('character')
@@ -95,7 +93,8 @@ class CommandHandlers(BaseHandler):
         llm_service = self.get_service('llm')
         if llm_service:
             if hasattr(llm_service, 'is_available') and llm_service.is_available:
-                model_name = getattr(llm_service, 'model_name', 'Неизвестно')
+                model_name = getattr(llm_service, 'active_model', 
+                                   getattr(llm_service, 'model_name', 'Неизвестно'))
                 stats_lines.append(f"🧠 LLM: ✅ {model_name}")
             else:
                 stats_lines.append("🧠 LLM: ❌ Недоступно")
@@ -119,9 +118,10 @@ class CommandHandlers(BaseHandler):
             try:
                 storage_stats = storage_service.get_stats()
                 total_conversations = storage_stats.get('total_conversations', 0)
-                stats_lines.append(f"💾 Хранилище: ✅ {total_conversations} диалогов")
+                total_messages = storage_stats.get('total_messages', 0)
+                stats_lines.append(f"💾 Хранилище: ✅ {total_conversations} диалогов, {total_messages} сообщений")
             except:
-                stats_lines.append("💾 Хранилище: ⚠️ Ошибка")
+                stats_lines.append("💾 Хранилище: ⚠️ Ошибка получения статистики")
         else:
             stats_lines.append("💾 Хранилище: ❌ Не найден")
         
@@ -131,7 +131,7 @@ class CommandHandlers(BaseHandler):
     
     async def clear_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Команда /clear - очистить историю."""
-        user = self._get_user_from_update(update)
+        user = self.get_user_from_update(update)
         
         storage_service = self.get_service('storage')
         if storage_service and hasattr(storage_service, 'clear_conversation'):
@@ -202,18 +202,3 @@ class CommandHandlers(BaseHandler):
         except Exception as e:
             await status_message.edit_text(f"❌ Ошибка генерации: {str(e)}")
             logger.error(f"Ошибка генерации изображения: {e}")
-    
-    def _get_user_from_update(self, update: Update) -> User:
-        """Создает объект User из Update."""
-        tg_user = update.effective_user
-        
-        return User(
-            id=tg_user.id,
-            username=tg_user.username,
-            first_name=tg_user.first_name,
-            last_name=tg_user.last_name,
-            language_code=tg_user.language_code,
-            created_at=datetime.now(),
-            last_seen=datetime.now(),
-            is_premium=getattr(tg_user, 'is_premium', False)
-        )

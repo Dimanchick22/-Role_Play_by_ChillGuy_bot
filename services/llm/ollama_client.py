@@ -1,4 +1,4 @@
-"""Ollama LLM клиент - СИНХРОННАЯ версия."""
+"""Ollama LLM клиент - исправленная версия."""
 
 import logging
 from typing import List, Dict, Any
@@ -9,21 +9,13 @@ except ImportError:
     logging.error("❌ Библиотека ollama не установлена. Установите: pip install ollama")
     ollama = None
 
-from abc import ABC
+from services.llm.base_client import BaseLLMClient  # Правильный импорт
 from models.base import BaseMessage, User
 
 logger = logging.getLogger(__name__)
 
-class BaseLLMClient(ABC):
-    """Базовый класс для LLM клиентов."""
-    
-    def __init__(self, model_name: str, **kwargs):
-        self.model_name = model_name
-        self.config = kwargs
-        self.is_available = False
-
 class OllamaClient(BaseLLMClient):
-    """Клиент для Ollama - СИНХРОННАЯ версия."""
+    """Клиент для Ollama - исправленная версия."""
     
     def __init__(self, model_name: str, **kwargs):
         super().__init__(model_name, **kwargs)
@@ -37,20 +29,24 @@ class OllamaClient(BaseLLMClient):
                 
                 # Автовыбор модели
                 if self.model_name == "auto":
-                    self.model_name = self._select_best_model(available_models)
+                    selected_model = self._select_best_model(available_models)
+                    # Не изменяем исходный model_name для сохранения конфигурации
+                    self.active_model = selected_model
+                else:
+                    self.active_model = self.model_name
                 
                 # Проверяем выбранную модель
-                if self.model_name in available_models:
+                if self.active_model in available_models:
                     self.is_available = True
-                    logger.info(f"✅ Ollama клиент готов с моделью {self.model_name}")
+                    logger.info(f"✅ Ollama клиент готов с моделью {self.active_model}")
                 else:
-                    logger.warning(f"⚠️ Модель {self.model_name} недоступна")
+                    logger.warning(f"⚠️ Модель {self.active_model} недоступна")
                     
             except Exception as e:
                 logger.warning(f"⚠️ Ollama недоступна: {e}")
     
     async def initialize(self) -> bool:
-        """Заглушка для совместимости."""
+        """Асинхронная инициализация для совместимости."""
         return self.is_available
     
     async def generate_response(
@@ -164,11 +160,11 @@ class OllamaClient(BaseLLMClient):
     def _call_ollama_sync(self, messages: List[Dict]) -> str:
         """СИНХРОННЫЙ вызов Ollama API."""
         try:
-            logger.debug(f"Вызов Ollama с моделью {self.model_name}")
+            logger.debug(f"Вызов Ollama с моделью {self.active_model}")
             
             # Пробуем chat API
             response = ollama.chat(
-                model=self.model_name,
+                model=self.active_model,
                 messages=messages,
                 options={
                     'temperature': self.config.get('temperature', 0.7),
@@ -191,7 +187,7 @@ class OllamaClient(BaseLLMClient):
                 # Fallback на generate
                 prompt = self._messages_to_prompt(messages)
                 response = ollama.generate(
-                    model=self.model_name,
+                    model=self.active_model,
                     prompt=prompt,
                     options={
                         'temperature': self.config.get('temperature', 0.7),

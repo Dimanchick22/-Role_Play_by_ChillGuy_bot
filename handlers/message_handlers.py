@@ -1,5 +1,4 @@
-# handlers/message_handlers.py
-"""Обработчики текстовых сообщений."""
+"""Обработчики текстовых сообщений - обновленная версия."""
 
 import logging
 from datetime import datetime
@@ -16,14 +15,11 @@ class MessageHandlers(BaseHandler):
     
     async def handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработка текстового сообщения."""
-        user = self._get_user_from_update(update)
+        user = self.get_user_from_update(update)  # Используем общий метод
         message_text = update.message.text
         
         # Показываем "печатает"
-        await context.bot.send_chat_action(
-            chat_id=update.effective_chat.id,
-            action="typing"
-        )
+        await self.send_typing_action(update, context)
         
         try:
             # Получаем сервисы
@@ -54,20 +50,9 @@ class MessageHandlers(BaseHandler):
                 recent_messages = [user_message]
             
             # Генерируем ответ
-            if llm_service and getattr(llm_service, 'is_available', False):
-                try:
-                    response_text = await llm_service.generate_response(
-                        messages=recent_messages,
-                        user=user
-                    )
-                    used_llm = True
-                except Exception as e:
-                    logger.warning(f"Ошибка LLM, переключаемся на шаблоны: {e}")
-                    response_text = self._get_template_response(message_text, user.first_name, character_service)
-                    used_llm = False
-            else:
-                response_text = self._get_template_response(message_text, user.first_name, character_service)
-                used_llm = False
+            response_text, used_llm = await self._generate_response(
+                llm_service, character_service, recent_messages, user, message_text
+            )
             
             # Создаем ответное сообщение
             bot_message = BaseMessage(
@@ -98,37 +83,48 @@ class MessageHandlers(BaseHandler):
             
         except Exception as e:
             logger.error(f"Ошибка обработки сообщения: {e}", exc_info=True)
-            await update.message.reply_text(
-                "Упс! 🙈 Что-то пошло не так. Попробуй еще раз!"
-            )
+            await self._send_error_response(update, character_service)
     
-    def _get_template_response(self, message: str, user_name: str, character_service) -> str:
-        """Получает шаблонный ответ."""
+    async def _generate_response(self, llm_service, character_service, 
+                               recent_messages, user, message_text) -> tuple[str, bool]:
+        """Генерирует ответ, используя LLM или шаблоны."""
+        
+        # Пытаемся использовать LLM
+        if llm_service and getattr(llm_service, 'is_available', False):
+            try:
+                response_text = await llm_service.generate_response(
+                    messages=recent_messages,
+                    user=user
+                )
+                return response_text, True
+                
+            except Exception as e:
+                logger.warning(f"Ошибка LLM, переключаемся на шаблоны: {e}")
+        
+        # Fallback на шаблонные ответы
         if character_service and hasattr(character_service, 'get_template_response'):
-            return character_service.get_template_response(message, user_name)
+            response_text = character_service.get_template_response(
+                message_text, user.first_name
+            )
+        else:
+            # Используем базовые fallback ответы
+            response_text = self.get_template_response_fallback(
+                message_text, user.first_name
+            )
         
-        # Fallback ответы если персонаж недоступен
-        import random
-        responses = [
-            f"Привет{f', {user_name}' if user_name else ''}! 😊 Как дела?",
-            "Интересно! 😊 Расскажи больше!",
-            "Классно! ✨ А что еще?",
-            "Супер! 🎉 Я слушаю!"
-        ]
-        return random.choice(responses)
+        return response_text, False
     
-    def _get_user_from_update(self, update: Update):
-        """Создает объект User из Update."""
-        from models.base import User
-        tg_user = update.effective_user
-        
-        return User(
-            id=tg_user.id,
-            username=tg_user.username,
-            first_name=tg_user.first_name,
-            last_name=tg_user.last_name,
-            language_code=tg_user.language_code,
-            created_at=datetime.now(),
-            last_seen=datetime.now(),
-            is_premium=getattr(tg_user, 'is_premium', False)
-        )
+    async def _send_error_response(self, update: Update, character_service):
+        """Отправляет ответ при ошибке."""
+        try:
+            if character_service and hasattr(character_service, 'get_error_responses'):
+                import random
+                error_responses = character_service.get_error_responses()
+                error_message = random.choice(error_responses)
+            else:
+                error_message = "Упс! 🙈 Что-то пошло не так. Попробуй еще раз!"
+            
+            await update.message.reply_text(error_message)
+            
+        except Exception as e:
+            logger.error(f"Не удалось отправить сообщение об ошибке: {e}")
