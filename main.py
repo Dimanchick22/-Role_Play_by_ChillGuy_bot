@@ -1,4 +1,4 @@
-"""Точка входа приложения - исправленная версия."""
+"""Точка входа приложения - роль-плей версия."""
 
 import logging
 import sys
@@ -11,7 +11,7 @@ if platform.system() == 'Windows':
 
 from config.logging_config import setup_logging
 from config.settings import load_config
-from core.application import TelegramBotApplication
+from core.application import RoleplayTelegramBotApplication  # Используем роль-плей версию
 
 def main():
     """Главная функция."""
@@ -22,7 +22,7 @@ def main():
         # Настраиваем логирование
         setup_logging(config.log_level, config.debug)
         
-        logging.info("🚀 Запуск Telegram бота...")
+        logging.info("🎭 Запуск роль-плей Telegram бота...")
         logging.info(f"🖥️ Платформа: {platform.system()}")
         logging.info(f"🐍 Python: {platform.python_version()}")
         
@@ -30,9 +30,10 @@ def main():
             logging.info("🪟 Использована Windows Event Loop Policy")
         
         logging.info("⚠️ Для остановки нажмите Ctrl+C")
+        logging.info("🎭 Режим: Интерактивный роль-плей с генерацией изображений")
         
-        # Создаем и запускаем приложение
-        app = TelegramBotApplication(config)
+        # Создаем и запускаем роль-плей приложение
+        app = RoleplayTelegramBotApplication(config)
         app.run()
         
     except KeyboardInterrupt:
