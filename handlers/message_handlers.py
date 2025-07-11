@@ -1,12 +1,15 @@
 # handlers/message_handlers.py
 """Обработчики текстовых сообщений."""
 
+import logging
 from datetime import datetime
 from telegram import Update
 from telegram.ext import ContextTypes
 
 from handlers.base_handler import BaseHandler
 from models.base import BaseMessage, MessageType, MessageRole
+
+logger = logging.getLogger(__name__)
 
 class MessageHandlers(BaseHandler):
     """Обработчики текстовых сообщений."""
@@ -94,7 +97,7 @@ class MessageHandlers(BaseHandler):
             )
             
         except Exception as e:
-            logger.error(f"Ошибка обработки сообщения: {e}")
+            logger.error(f"Ошибка обработки сообщения: {e}", exc_info=True)
             await update.message.reply_text(
                 "Упс! 🙈 Что-то пошло не так. Попробуй еще раз!"
             )

@@ -41,7 +41,7 @@ class TelegramBotApplication:
             return True
             
         except Exception as e:
-            logger.error(f"❌ Ошибка инициализации: {e}")
+            logger.error(f"❌ Ошибка инициализации: {e}", exc_info=True)
             return False
     
     async def start(self) -> None:
@@ -57,36 +57,68 @@ class TelegramBotApplication:
             # Логируем активные сервисы
             await self._log_services_status()
             
-            # Запускаем polling
             self.is_running = True
             logger.info("👂 Бот слушает сообщения...")
             
-            await self.app.run_polling(
+            # Инициализируем приложение
+            await self.app.initialize()
+            
+            # Запускаем updater
+            await self.app.updater.start_polling(
                 drop_pending_updates=True,
                 allowed_updates=["message", "callback_query"]
             )
             
-        except KeyboardInterrupt:
-            logger.info("⏹️ Получен сигнал остановки")
-            await self.stop()
+            # Запускаем приложение
+            await self.app.start()
+            
+            logger.info("✅ Бот успешно запущен!")
+            
+            # Бесконечный цикл для поддержания работы
+            try:
+                while self.is_running:
+                    await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                logger.info("🛑 Получен сигнал остановки")
+                
         except Exception as e:
-            logger.error(f"💥 Критическая ошибка: {e}")
+            logger.error(f"💥 Критическая ошибка: {e}", exc_info=True)
             raise
+        finally:
+            await self._cleanup()
     
     async def stop(self) -> None:
         """Останавливает бота."""
         if self.is_running:
-            logger.info("🛑 Остановка бота...")
+            logger.info("🛑 Начинаю остановку бота...")
             self.is_running = False
-            
+    
+    async def _cleanup(self) -> None:
+        """Очищает ресурсы."""
+        logger.info("🧹 Очистка ресурсов...")
+        
+        try:
             if self.app:
+                # Останавливаем updater
+                if hasattr(self.app, 'updater') and self.app.updater.running:
+                    logger.info("⏹️ Остановка updater...")
+                    await self.app.updater.stop()
+                
+                # Останавливаем приложение
+                logger.info("🔌 Остановка приложения...")
                 await self.app.stop()
+                
+                # Завершаем работу
+                logger.info("🔚 Завершение работы...")
                 await self.app.shutdown()
             
             # Очищаем сервисы
             await self.factory.cleanup_services()
             
             logger.info("👋 Бот остановлен")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка при остановке: {e}", exc_info=True)
     
     def _register_handlers(self) -> None:
         """Регистрирует обработчики сообщений."""
@@ -99,6 +131,9 @@ class TelegramBotApplication:
         self.app.add_handler(CommandHandler("help", command_handlers.help_command))
         self.app.add_handler(CommandHandler("stats", command_handlers.stats_command))
         self.app.add_handler(CommandHandler("clear", command_handlers.clear_command))
+        
+        # Дополнительная команда для отладки
+        self.app.add_handler(CommandHandler("info", command_handlers.info_command))
         
         # Генерация изображений (если доступна)
         if self.config.image.enabled:
@@ -122,8 +157,9 @@ class TelegramBotApplication:
         # LLM сервис
         try:
             llm_service = registry.get('llm')
-            if llm_service.is_available:
-                services_status.append(f"🧠 LLM: {llm_service.model_name}")
+            if hasattr(llm_service, 'is_available') and llm_service.is_available:
+                model_name = getattr(llm_service, 'model_name', 'неизвестно')
+                services_status.append(f"🧠 LLM: {model_name}")
             else:
                 services_status.append("🧠 LLM: недоступен")
         except:
@@ -132,7 +168,7 @@ class TelegramBotApplication:
         # Сервис изображений
         try:
             image_service = registry.get('image')
-            if image_service.is_initialized:
+            if hasattr(image_service, 'is_initialized') and image_service.is_initialized:
                 services_status.append("🎨 Изображения: активны")
             else:
                 services_status.append("🎨 Изображения: неактивны")
@@ -142,8 +178,12 @@ class TelegramBotApplication:
         # Хранилище
         try:
             storage_service = registry.get('storage')
-            stats = storage_service.get_stats()
-            services_status.append(f"💾 Хранилище: {stats['total_conversations']} диалогов")
+            if hasattr(storage_service, 'get_stats'):
+                stats = storage_service.get_stats()
+                total_conversations = stats.get('total_conversations', 0)
+                services_status.append(f"💾 Хранилище: {total_conversations} диалогов")
+            else:
+                services_status.append("💾 Хранилище: активно")
         except:
             services_status.append("💾 Хранилище: ошибка")
         
@@ -160,5 +200,5 @@ class TelegramBotApplication:
                 await update.message.reply_text(
                     "Упс! 🙈 Произошла ошибка. Попробуйте еще раз!"
                 )
-            except:
-                pass  # Игнорируем ошибки отправки сообщений
+            except Exception as e:
+                logger.error(f"Не удалось отправить сообщение об ошибке: {e}")
