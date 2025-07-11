@@ -1,7 +1,6 @@
-"""Главный класс приложения - исправленная версия."""
+"""Главный класс приложения - ПРАВИЛЬНАЯ версия."""
 
 import logging
-import asyncio
 from typing import Optional
 
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
@@ -19,106 +18,150 @@ class TelegramBotApplication:
         self.config = config or load_config()
         self.app: Optional[Application] = None
         self.factory = BotFactory(self.config)
-        self.is_running = False
     
-    async def initialize(self) -> bool:
-        """Инициализирует приложение."""
+    def run(self) -> None:
+        """Запускает бота - СИНХРОННО!"""
         try:
             logger.info("🚀 Инициализация приложения...")
-            
-            # Создаем сервисы
-            await self.factory.create_services()
             
             # Создаем Telegram приложение
             self.app = Application.builder().token(
                 self.config.telegram.bot_token
             ).build()
             
+            # Создаем сервисы СИНХРОННО
+            self._create_services()
+            
             # Регистрируем обработчики
             self._register_handlers()
             
-            logger.info("✅ Приложение инициализировано")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Ошибка инициализации: {e}", exc_info=True)
-            return False
-    
-    async def start(self) -> None:
-        """Запускает бота."""
-        if not self.app:
-            raise RuntimeError("Приложение не инициализировано")
-        
-        try:
-            # Получаем информацию о боте
-            bot_info = await self.app.bot.get_me()
-            logger.info(f"🤖 Запуск бота @{bot_info.username}")
+            # Информацию о боте получим после запуска
+            logger.info("🤖 Бот готов к запуску")
             
             # Логируем активные сервисы
-            await self._log_services_status()
+            self._log_services_status()
             
-            self.is_running = True
             logger.info("👂 Бот слушает сообщения...")
             
-            # Инициализируем приложение
-            await self.app.initialize()
-            
-            # Запускаем updater
-            await self.app.updater.start_polling(
+            # python-telegram-bot САМА управляет event loop!
+            # НЕ ИСПОЛЬЗУЕМ asyncio.run(), НЕ создаем потоки!
+            self.app.run_polling(
                 drop_pending_updates=True,
                 allowed_updates=["message", "callback_query"]
             )
             
-            # Запускаем приложение
-            await self.app.start()
-            
-            logger.info("✅ Бот успешно запущен!")
-            
-            # Бесконечный цикл для поддержания работы
-            try:
-                while self.is_running:
-                    await asyncio.sleep(1)
-            except asyncio.CancelledError:
-                logger.info("🛑 Получен сигнал остановки")
-                
         except Exception as e:
             logger.error(f"💥 Критическая ошибка: {e}", exc_info=True)
             raise
-        finally:
-            await self._cleanup()
     
-    async def stop(self) -> None:
-        """Останавливает бота."""
-        if self.is_running:
-            logger.info("🛑 Начинаю остановку бота...")
-            self.is_running = False
-    
-    async def _cleanup(self) -> None:
-        """Очищает ресурсы."""
-        logger.info("🧹 Очистка ресурсов...")
+    def _create_services(self) -> None:
+        """Создает сервисы СИНХРОННО."""
+        logger.info("🔧 Создание сервисов...")
         
+        # Хранилище (всегда нужно)
+        self._create_storage_service()
+        
+        # Персонаж (всегда нужен)
+        self._create_character_service()
+        
+        # LLM сервис (опционально)
+        if self.config.llm.provider != "none":
+            self._create_llm_service()
+        
+        # Сервис изображений (опционально)
+        if self.config.image.enabled:
+            self._create_image_service()
+        
+        # Обработчики (всегда нужны)
+        self._create_handlers()
+        
+        logger.info("✅ Сервисы созданы")
+    
+    def _create_storage_service(self) -> None:
+        """Создает сервис хранилища."""
         try:
-            if self.app:
-                # Останавливаем updater
-                if hasattr(self.app, 'updater') and self.app.updater.running:
-                    logger.info("⏹️ Остановка updater...")
-                    await self.app.updater.stop()
-                
-                # Останавливаем приложение
-                logger.info("🔌 Остановка приложения...")
-                await self.app.stop()
-                
-                # Завершаем работу
-                logger.info("🔚 Завершение работы...")
-                await self.app.shutdown()
+            from services.storage.memory_storage import MemoryStorage
             
-            # Очищаем сервисы
-            await self.factory.cleanup_services()
+            storage = MemoryStorage(
+                max_conversations=self.config.storage.max_conversations
+            )
             
-            logger.info("👋 Бот остановлен")
+            registry.register('storage', storage)
+            logger.info("💾 Сервис хранилища создан")
             
         except Exception as e:
-            logger.error(f"❌ Ошибка при остановке: {e}", exc_info=True)
+            logger.error(f"❌ Ошибка создания хранилища: {e}")
+            raise
+    
+    def _create_character_service(self) -> None:
+        """Создает сервис персонажа."""
+        try:
+            from characters.alice import AliceCharacter
+            
+            character = AliceCharacter()
+            
+            registry.register('character', character)
+            logger.info("👩 Персонаж Алиса создан")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка создания персонажа: {e}")
+            raise
+    
+    def _create_llm_service(self) -> None:
+        """Создает LLM сервис."""
+        try:
+            if self.config.llm.provider == "ollama":
+                from services.llm.ollama_client import OllamaClient
+                
+                llm = OllamaClient(
+                    model_name=self.config.llm.model_name,
+                    temperature=self.config.llm.temperature,
+                    max_tokens=self.config.llm.max_tokens
+                )
+                
+                # Проверяем доступность СИНХРОННО
+                try:
+                    import ollama
+                    ollama.list()  # Простая проверка
+                    
+                    registry.register('llm', llm)
+                    logger.info(f"🧠 LLM сервис создан: {llm.model_name}")
+                except:
+                    logger.warning("⚠️ Ollama недоступна, бот будет работать без LLM")
+            
+            else:
+                logger.warning(f"❓ Неизвестный LLM провайдер: {self.config.llm.provider}")
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка создания LLM сервиса: {e}")
+            # Не падаем, бот может работать без LLM
+    
+    def _create_image_service(self) -> None:
+        """Создает сервис генерации изображений."""
+        try:
+            logger.warning("🎨 Генерация изображений отключена (требует async инициализации)")
+            # Можно добавить простую синхронную проверку доступности
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка создания сервиса изображений: {e}")
+    
+    def _create_handlers(self) -> None:
+        """Создает обработчики сообщений."""
+        try:
+            from handlers.command_handlers import CommandHandlers
+            from handlers.message_handlers import MessageHandlers
+            
+            command_handlers = CommandHandlers()
+            message_handlers = MessageHandlers()
+            
+            registry.register('command_handlers', command_handlers)
+            registry.register('message_handlers', message_handlers)
+            
+            logger.info("📝 Обработчики созданы")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка создания обработчиков: {e}")
+            raise
     
     def _register_handlers(self) -> None:
         """Регистрирует обработчики сообщений."""
@@ -131,8 +174,6 @@ class TelegramBotApplication:
         self.app.add_handler(CommandHandler("help", command_handlers.help_command))
         self.app.add_handler(CommandHandler("stats", command_handlers.stats_command))
         self.app.add_handler(CommandHandler("clear", command_handlers.clear_command))
-        
-        # Дополнительная команда для отладки
         self.app.add_handler(CommandHandler("info", command_handlers.info_command))
         
         # Генерация изображений (если доступна)
@@ -150,44 +191,26 @@ class TelegramBotApplication:
         
         logger.info("📝 Обработчики зарегистрированы")
     
-    async def _log_services_status(self) -> None:
+    def _log_services_status(self) -> None:
         """Логирует статус сервисов."""
         services_status = []
         
         # LLM сервис
-        try:
-            llm_service = registry.get('llm', None)
-            if llm_service and hasattr(llm_service, 'is_available') and llm_service.is_available:
-                model_name = getattr(llm_service, 'model_name', 'неизвестно')
-                services_status.append(f"🧠 LLM: {model_name}")
-            else:
-                services_status.append("🧠 LLM: недоступен")
-        except:
-            services_status.append("🧠 LLM: не найден")
+        if registry.has('llm'):
+            services_status.append("🧠 LLM: доступен")
+        else:
+            services_status.append("🧠 LLM: недоступен")
         
-        # Сервис изображений (только если включен в конфигурации)
-        if self.config.image.enabled:
-            try:
-                image_service = registry.get('image', None)
-                if image_service and hasattr(image_service, 'is_initialized') and image_service.is_initialized:
-                    services_status.append("🎨 Изображения: активны")
-                else:
-                    services_status.append("🎨 Изображения: неактивны")
-            except:
-                services_status.append("🎨 Изображения: не найден")
+        # Сервис изображений
+        if registry.has('image'):
+            services_status.append("🎨 Изображения: активны")
         else:
             services_status.append("🎨 Изображения: отключены")
         
         # Хранилище
-        try:
-            storage_service = registry.get('storage', None)
-            if storage_service and hasattr(storage_service, 'get_stats'):
-                stats = storage_service.get_stats()
-                total_conversations = stats.get('total_conversations', 0)
-                services_status.append(f"💾 Хранилище: {total_conversations} диалогов")
-            else:
-                services_status.append("💾 Хранилище: активно")
-        except:
+        if registry.has('storage'):
+            services_status.append("💾 Хранилище: активно")
+        else:
             services_status.append("💾 Хранилище: ошибка")
         
         logger.info("Активные сервисы:")

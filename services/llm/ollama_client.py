@@ -1,51 +1,57 @@
-"""Ollama LLM клиент."""
+"""Ollama LLM клиент - СИНХРОННАЯ версия."""
 
 import logging
-import time
 from typing import List, Dict, Any
-import ollama
 
-from services.llm.base_client import BaseLLMClient
+try:
+    import ollama
+except ImportError:
+    logging.error("❌ Библиотека ollama не установлена. Установите: pip install ollama")
+    ollama = None
+
+from abc import ABC
 from models.base import BaseMessage, User
 
 logger = logging.getLogger(__name__)
 
+class BaseLLMClient(ABC):
+    """Базовый класс для LLM клиентов."""
+    
+    def __init__(self, model_name: str, **kwargs):
+        self.model_name = model_name
+        self.config = kwargs
+        self.is_available = False
+
 class OllamaClient(BaseLLMClient):
-    """Клиент для Ollama."""
+    """Клиент для Ollama - СИНХРОННАЯ версия."""
+    
+    def __init__(self, model_name: str, **kwargs):
+        super().__init__(model_name, **kwargs)
+        self.is_available = False
+        
+        # Сразу проверяем доступность
+        if ollama is not None:
+            try:
+                models = ollama.list()
+                available_models = self.get_available_models()
+                
+                # Автовыбор модели
+                if self.model_name == "auto":
+                    self.model_name = self._select_best_model(available_models)
+                
+                # Проверяем выбранную модель
+                if self.model_name in available_models:
+                    self.is_available = True
+                    logger.info(f"✅ Ollama клиент готов с моделью {self.model_name}")
+                else:
+                    logger.warning(f"⚠️ Модель {self.model_name} недоступна")
+                    
+            except Exception as e:
+                logger.warning(f"⚠️ Ollama недоступна: {e}")
     
     async def initialize(self) -> bool:
-        """Инициализирует клиент."""
-        try:
-            # Проверяем подключение
-            models = ollama.list()
-            available_models = self.get_available_models()
-            
-            # Автовыбор модели
-            if self.model_name == "auto":
-                self.model_name = self._select_best_model(available_models)
-            
-            # Проверяем выбранную модель
-            if self.model_name not in available_models:
-                logger.warning(f"Модель {self.model_name} недоступна, пробуем скачать...")
-                # Пробуем скачать модель
-                try:
-                    ollama.pull(self.model_name)
-                    logger.info(f"✅ Модель {self.model_name} успешно скачана")
-                except Exception as pull_error:
-                    logger.error(f"❌ Не удалось скачать модель: {pull_error}")
-                    raise ValueError(f"Модель {self.model_name} недоступна и не может быть скачана")
-            
-            # Тестируем модель
-            await self._test_model()
-            
-            self.is_available = True
-            logger.info(f"✅ Ollama клиент инициализирован с моделью {self.model_name}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Ошибка инициализации Ollama: {e}")
-            self.is_available = False
-            return False
+        """Заглушка для совместимости."""
+        return self.is_available
     
     async def generate_response(
         self, 
@@ -54,14 +60,17 @@ class OllamaClient(BaseLLMClient):
         **kwargs
     ) -> str:
         """Генерирует ответ через Ollama."""
+        if not self.is_available or ollama is None:
+            raise RuntimeError("Ollama клиент недоступен")
+            
         try:
             # Преобразуем сообщения в формат Ollama
             ollama_messages = self._convert_messages(messages, user)
             
             logger.debug(f"Отправляем {len(ollama_messages)} сообщений в Ollama")
             
-            # Делаем запрос
-            response = await self._call_ollama(ollama_messages)
+            # Делаем СИНХРОННЫЙ запрос
+            response = self._call_ollama_sync(ollama_messages)
             
             return response.strip()
             
@@ -71,6 +80,9 @@ class OllamaClient(BaseLLMClient):
     
     async def check_health(self) -> bool:
         """Проверяет состояние Ollama."""
+        if ollama is None:
+            return False
+            
         try:
             ollama.list()
             return True
@@ -79,6 +91,9 @@ class OllamaClient(BaseLLMClient):
     
     def get_available_models(self) -> List[str]:
         """Возвращает доступные модели."""
+        if ollama is None:
+            return []
+            
         try:
             models_response = ollama.list()
             
@@ -123,12 +138,11 @@ class OllamaClient(BaseLLMClient):
         ollama_messages = []
         
         # Получаем персонажа для системного промпта
-        character_service = None
         try:
             from core.registry import registry
-            character_service = registry.get('character')
+            character_service = registry.get('character', None)
         except:
-            pass
+            character_service = None
         
         # Добавляем системный промпт
         if character_service and hasattr(character_service, 'get_system_prompt'):
@@ -147,8 +161,8 @@ class OllamaClient(BaseLLMClient):
         
         return ollama_messages
     
-    async def _call_ollama(self, messages: List[Dict]) -> str:
-        """Вызывает Ollama API."""
+    def _call_ollama_sync(self, messages: List[Dict]) -> str:
+        """СИНХРОННЫЙ вызов Ollama API."""
         try:
             logger.debug(f"Вызов Ollama с моделью {self.model_name}")
             
@@ -207,16 +221,3 @@ class OllamaClient(BaseLLMClient):
         
         prompt_parts.append("Ассистент:")
         return "\n".join(prompt_parts)
-    
-    async def _test_model(self) -> None:
-        """Тестирует модель."""
-        try:
-            test_response = ollama.generate(
-                model=self.model_name,
-                prompt="Скажи 'тест'",
-                options={'num_predict': 10}
-            )
-            logger.debug(f"Тест модели успешен: {test_response['response'][:50]}...")
-        except Exception as e:
-            logger.error(f"Тест модели не прошел: {e}")
-            raise
